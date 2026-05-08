@@ -1,0 +1,60 @@
+services:
+  mongo:
+    image: mongo:7
+    # Always check the registry for newer mongo:7 patch releases on `up`/`pull`.
+    pull_policy: always
+    container_name: dump-anything-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      # Named volume — survives `docker compose up`, `down`, image updates,
+      # and container recreation. Only `docker compose down -v` (or an explicit
+      # `docker volume rm`) deletes the data.
+      - dump-anything-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: buyungbahari/dump-anything:latest
+    # Always pull the latest published image on `docker compose up` so users
+    # automatically pick up new versions. To force a local rebuild instead,
+    # run `docker compose up --build`.
+    pull_policy: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dump-anything-app
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+      DATABASE_NAME: dump_anything
+      RUST_LOG: info
+      # ---- HTTP basic auth (optional) -----------------------------------
+      # Set both DASHBOARD_USER and DASHBOARD_PASSWORD to enable basic auth
+      # in front of the dashboard and the API. Leave empty to keep the app
+      # fully public. /health stays unauthenticated either way.
+      # The recommended workflow is to put credentials in a `.env` file
+      # next to this compose file (see .env.example).
+      DASHBOARD_USER: "${DASHBOARD_USER:-}"
+      DASHBOARD_PASSWORD: "${DASHBOARD_PASSWORD:-}"
+      DASHBOARD_REALM: "${DASHBOARD_REALM:-Dump Anything}"
+      # Optional: seed the first API key with a known value. If unset, the
+      # server auto-generates one on first start and logs it once.
+      BOOTSTRAP_API_KEY: "${BOOTSTRAP_API_KEY:-}"
+    ports:
+      # Override the host-side port via APP_PORT (e.g. APP_PORT=18080) when
+      # something else already binds 8080.
+      - "${APP_PORT:-8080}:8080"
+
+volumes:
+  dump-anything-mongo-data:
+    # Stable, project-independent name so the volume is reused even if the
+    # compose project (folder) is renamed.
+    name: dump-anything-mongo-data

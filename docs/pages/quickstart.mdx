@@ -1,0 +1,70 @@
+---
+title: Quickstart
+description: From `docker compose up` to your first ingest in under a minute.
+---
+
+# Quickstart
+
+## 1. Bring up the stack
+
+```bash
+docker compose up -d
+```
+
+Compose pulls the latest published image (`buyungbahari/dump-anything:latest`)
+and starts a MongoDB 7 container alongside it. The dashboard, API, and these
+docs are all served by nginx on port `8080`.
+
+If port `8080` is busy, override it:
+
+```bash
+APP_PORT=18080 docker compose up -d
+```
+
+## 2. Grab the bootstrap key
+
+The very first time the API starts against an empty database it prints a
+one-time **bootstrap key** to the logs:
+
+```bash
+docker compose logs app | grep "key:"
+# key:    da_<32 hex characters>
+```
+
+Copy that value — the plaintext is never written to disk and the log line
+is the only place you'll see it.
+
+## 3. Open the dashboard
+
+Visit [http://localhost:8080](http://localhost:8080). You'll be greeted by
+the API key prompt; paste the bootstrap key and continue.
+
+Use the **API keys** button in the topbar to mint labelled keys
+(`from-laptop`, `ci-runner`, …) and revoke the bootstrap one when you're
+ready.
+
+## 4. Ingest your first JSON
+
+```bash
+KEY=da_…   # the key you just minted
+
+curl -X POST http://localhost:8080/api/collections/events/documents \
+  -H "X-API-Key: $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"user":"alice","event":"signup","tags":["beta"]}'
+# => {"inserted":1,"ids":["69f8…"]}
+```
+
+Refresh the dashboard sidebar and `events` will be there with one row.
+
+## 5. Production checklist
+
+- Set `BOOTSTRAP_API_KEY` in `.env` for unattended deployments — the server
+  uses it instead of generating a random key.
+- Optionally set `DASHBOARD_USER` + `DASHBOARD_PASSWORD` to add HTTP basic
+  auth in front of the SPA (defence-in-depth on top of the API key).
+- The Mongo data lives in a named volume `dump-anything-mongo-data`. It
+  survives `docker compose pull`, `up`, and `down`, but is destroyed by
+  `down -v`.
+- Both `latest` and pinned tags (e.g. `0.4.0`) are published as
+  multi-arch (`linux/amd64` + `linux/arm64`).

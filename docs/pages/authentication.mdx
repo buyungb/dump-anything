@@ -1,0 +1,87 @@
+---
+title: Authentication
+description: How API keys work, how to bootstrap, rotate, and revoke them.
+---
+
+# Authentication
+
+Every `/api/*` endpoint requires a valid API key. `/health` is the only
+public endpoint and is intended for orchestrator probes.
+
+## Sending the key
+
+Either header works — pick whichever suits your client.
+
+```bash
+# X-API-Key style (preferred for service-to-service)
+curl -H "X-API-Key: da_…" http://localhost:8080/api/collections
+
+# Bearer style (drop-in compatible with most HTTP libraries)
+curl -H "Authorization: Bearer da_…" http://localhost:8080/api/collections
+```
+
+Missing or invalid keys return `401 unauthorized`:
+
+```json
+{ "error": "unauthorized", "message": "missing api key" }
+```
+
+## Key format
+
+```
+da_<32 hex chars>           total length 35
+^^^                         identifier prefix, 6 hex chars are public
+   ^^^^^^^^^^^^^^^^^^^^^^^^^ 16 random bytes from the OS RNG
+```
+
+Keys are stored in the hidden `_api_keys` MongoDB collection as
+`{ label, prefix, hash, created_at, last_used_at, revoked_at }`. The hash
+is SHA-256 of the plaintext; the plaintext itself is **never** persisted.
+
+## The bootstrap key
+
+The first time the server starts against an empty database it provisions
+one key and logs it:
+
+```
+[WARN] =================== BOOTSTRAP API KEY ===================
+[WARN] source: auto-generated
+[WARN] key:    da_…
+[WARN] Save this now — it will not be shown again.
+[WARN] =========================================================
+```
+
+Two ways to override:
+
+- **`BOOTSTRAP_API_KEY` env var** — when set, the server persists this exact
+  value as the seed key. Useful for ops automation.
+- **Existing keys** — once any non-revoked key exists in the database,
+  bootstrap is skipped on subsequent startups.
+
+## Issuing labelled keys
+
+Open **API keys** in the dashboard topbar and create one per consumer
+(`from-laptop`, `ci-runner`, `webhook-x`, …). The plaintext is shown
+exactly once on creation; the dashboard stores it in `localStorage` if you
+click *Use in this session*.
+
+Or via the API:
+
+```bash
+curl -X POST http://localhost:8080/api/keys \
+  -H "X-API-Key: $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"label":"ci-runner"}'
+```
+
+## Rotation
+
+There is no time-based expiry. To rotate:
+
+1. Create the new key.
+2. Roll it out to your callers.
+3. Revoke the old one (`DELETE /api/keys/{id}` or the trash icon in the
+   dashboard).
+
+Revocation takes effect on the next request — the lookup filters on
+`revoked_at IS NULL`.

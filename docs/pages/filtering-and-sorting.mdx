@@ -1,0 +1,85 @@
+---
+title: Filtering and sorting
+description: MongoDB extended-JSON filters via the q parameter.
+---
+
+# Filtering and sorting
+
+```
+GET /api/collections/{name}/documents
+    ?limit=50
+    &skip=0
+    &sort=-_id
+    &q=<MongoDB filter as JSON>
+```
+
+## Pagination
+
+| Param   | Default  | Limits           |
+| ------- | -------- | ---------------- |
+| `limit` | `50`     | min 1, max 500   |
+| `skip`  | `0`      | unbounded        |
+
+The response includes the absolute `total` so the dashboard can render a
+proper page indicator without a second roundtrip.
+
+## Sorting
+
+`sort` is a comma-separated list of field names. Prefix with `-` for
+descending. Default: `-_id` (newest first).
+
+```
+sort=-amount,name        # amount desc, then name asc
+```
+
+## Filtering
+
+`q` is any MongoDB filter document, JSON-encoded. The server passes it
+straight to the `find()` cursor, so all the standard operators work.
+
+| Operator    | What it does                          |
+| ----------- | ------------------------------------- |
+| `$eq` `$ne` | equality / inequality                 |
+| `$gt` `$gte` `$lt` `$lte` | range                   |
+| `$in` `$nin` | membership                           |
+| `$exists`   | field presence                        |
+| `$regex` `$options` | regex match                   |
+| `$and` `$or` `$not` `$nor` | logical composition    |
+| `$elemMatch` | per-element array predicate          |
+| `$all` `$size` | array all-of / cardinality         |
+
+The dashboard's filter input autocompletes both **document field paths**
+and **operators** based on JSON cursor context — start typing and it
+will suggest the right thing.
+
+## Recipes
+
+```bash
+# All transactions over $200
+q='{"amount":{"$gte":200}}'
+
+# Multiple users at once
+q='{"user":{"$in":["alice","bob"]}}'
+
+# Case-insensitive prefix match
+q='{"name":{"$regex":"^al","$options":"i"}}'
+
+# Compound query
+q='{"$and":[
+  {"amount":{"$gte":100}},
+  {"merchant.category":"ecommerce"},
+  {"status":{"$ne":"refunded"}}
+]}'
+
+curl -G --data-urlencode "q=$q" \
+  -H "X-API-Key: $KEY" \
+  http://localhost:8080/api/collections/transactions/documents
+```
+
+## What you can't do (yet)
+
+- Aggregation pipeline (`$group`, `$lookup`, etc.). Use the Mongo shell or
+  add it as a Tower middleware on top of the existing routes.
+- Full-text search. `$regex` is fine for prefix searches at low cardinality
+  but you'll want a real text index for anything bigger.
+- Field projection. The server always returns the full document.

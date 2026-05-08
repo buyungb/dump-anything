@@ -1,0 +1,70 @@
+---
+title: Ingesting data
+description: One object, an array, or a streaming firehose.
+---
+
+# Ingesting data
+
+The ingest endpoint is intentionally minimal:
+
+```
+POST /api/collections/{name}/documents
+```
+
+The collection is created on first write. Names must match
+`^[A-Za-z][A-Za-z0-9_.\-]{0,119}$` — letters, digits, dot, underscore,
+hyphen; cannot start with `_` or `system.`.
+
+## Single document
+
+```bash
+curl -X POST http://localhost:8080/api/collections/events/documents \
+  -H "X-API-Key: $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"user":"alice","event":"signup","tags":["beta"]}'
+```
+
+Response:
+
+```json
+{ "inserted": 1, "ids": ["69f86827280bbd545b3e835d"] }
+```
+
+## Batch insert
+
+Pass an array. The server preserves order and returns the inserted IDs in
+that order.
+
+```bash
+curl -X POST http://localhost:8080/api/collections/events/documents \
+  -H "X-API-Key: $KEY" \
+  -H 'content-type: application/json' \
+  -d '[{"user":"bob"},{"user":"carol"}]'
+```
+
+## Auto-fields
+
+If a document doesn't already include an `_ingestedAt` field, the server
+adds one (BSON `Date`). This makes it trivial to filter by ingest time:
+
+```bash
+# everything ingested in the last hour
+q='{"_ingestedAt":{"$gte":{"$date":"2026-05-04T13:00:00Z"}}}'
+curl -G --data-urlencode "q=$q" \
+  -H "X-API-Key: $KEY" \
+  http://localhost:8080/api/collections/events/documents
+```
+
+`_id` is the standard MongoDB `ObjectId`. You can override either by
+including the field explicitly in your payload.
+
+## Common patterns
+
+- **Webhooks.** Point a webhook receiver straight at
+  `POST /api/collections/<source>/documents` and you have a queryable log
+  with zero glue code.
+- **Bulk import.** `jq -c '.[]'` your file into a `while read line` loop,
+  or send a single array body up to ~25 MB (`client_max_body_size` in the
+  bundled nginx).
+- **Append-only event log.** Don't update — store every state change as a
+  new document, then aggregate on read.

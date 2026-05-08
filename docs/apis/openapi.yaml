@@ -1,0 +1,420 @@
+openapi: 3.1.0
+info:
+  title: Dump Anything API
+  version: "0.4.0"
+  summary: Ingest any JSON into MongoDB and explore it.
+  description: |
+    A small, fast Rust + Axum service that accepts arbitrary JSON, stores it
+    in dynamically-created MongoDB collections, and exposes a paginated query
+    API. Every `/api/...` endpoint requires an API key in the `X-API-Key`
+    header (or `Authorization: Bearer <key>`). `/health` is the only public
+    endpoint and is intended for orchestrator probes.
+  contact:
+    name: Dump Anything
+    url: https://hub.docker.com/r/buyungbahari/dump-anything
+  license:
+    name: MIT
+servers:
+  - url: /
+    description: Same origin (when served by the bundled image at port 8080).
+  - url: http://localhost:3000
+    description: Local Rust API in split dev mode.
+tags:
+  - name: Health
+    description: Liveness probe — public.
+  - name: Collections
+    description: Auto-created on first write; one Mongo collection per name.
+  - name: Documents
+    description: Paginated, filterable, sortable JSON documents inside a collection.
+  - name: API keys
+    description: Issue and revoke keys that gate every other `/api` endpoint.
+security:
+  - apiKeyHeader: []
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health probe
+      description: Pings MongoDB and reports the connection status. **No auth required.**
+      security: []
+      responses:
+        "200":
+          description: API and database are reachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              example:
+                status: ok
+                database: dump_anything
+                mongo: true
+
+  /api/collections:
+    get:
+      tags: [Collections]
+      summary: List collections
+      description: |
+        Returns every user-created collection with an estimated document
+        count. Internal collections (e.g. `_api_keys`, `system.*`) are
+        hidden.
+      responses:
+        "200":
+          description: Collection list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionsResponse" }
+              example:
+                collections:
+                  - { name: events, count: 42 }
+                  - { name: transactions, count: 12 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/collections/{name}:
+    delete:
+      tags: [Collections]
+      summary: Drop a collection
+      description: Permanently deletes the collection and every document inside.
+      parameters:
+        - $ref: "#/components/parameters/CollectionName"
+      responses:
+        "200":
+          description: Collection dropped.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DropResponse" }
+              example: { dropped: true, name: events }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/collections/{name}/documents:
+    post:
+      tags: [Documents]
+      summary: Ingest a document (or array of documents)
+      description: |
+        Accepts a single JSON object or an array of objects. The collection is
+        created on first write. Each document gets an `_ingestedAt` timestamp
+        if you don't provide one. The server returns the inserted ObjectId(s).
+      parameters:
+        - $ref: "#/components/parameters/CollectionName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: true
+                - type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+            examples:
+              single:
+                summary: Single document
+                value: { user: alice, event: signup, tags: [beta] }
+              batch:
+                summary: Batch insert
+                value:
+                  - { user: bob }
+                  - { user: carol }
+      responses:
+        "200":
+          description: Inserted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InsertResponse" }
+              example:
+                inserted: 1
+                ids: ["69f86827280bbd545b3e835d"]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [Documents]
+      summary: List documents
+      description: |
+        Paginated, sortable, filterable read of a collection. The `q` parameter
+        accepts MongoDB extended JSON, so you can use operators like `$gte`,
+        `$in`, `$regex`, etc.
+      parameters:
+        - $ref: "#/components/parameters/CollectionName"
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 500, minimum: 1 }
+        - in: query
+          name: skip
+          schema: { type: integer, default: 0, minimum: 0 }
+        - in: query
+          name: sort
+          description: Comma-separated field list. Prefix with `-` for descending.
+          schema: { type: string, default: "-_id" }
+          example: "-amount"
+        - in: query
+          name: q
+          description: MongoDB filter encoded as JSON.
+          schema: { type: string }
+          examples:
+            equality:
+              value: '{"user":"alice"}'
+            operator:
+              value: '{"amount":{"$gte":200}}'
+      responses:
+        "200":
+          description: Paginated document slice.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentsResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/collections/{name}/documents/{id}:
+    get:
+      tags: [Documents]
+      summary: Fetch a single document
+      parameters:
+        - $ref: "#/components/parameters/CollectionName"
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Documents]
+      summary: Delete a single document
+      parameters:
+        - $ref: "#/components/parameters/CollectionName"
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeleteResponse" }
+              example: { deleted: true, id: "69f86827280bbd545b3e835d" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/keys:
+    get:
+      tags: [API keys]
+      summary: List API keys
+      description: |
+        Every key the database has ever issued, active or revoked. The plaintext
+        key is **never** returned — only its label, prefix, and timestamps.
+      responses:
+        "200":
+          description: All keys.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeysResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [API keys]
+      summary: Create an API key
+      description: |
+        Generates a new random key (`da_<32 hex chars>`) and stores its hash.
+        The plaintext is included in the response **once** — save it now.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateApiKeyRequest" }
+            example: { label: "ci-runner" }
+      responses:
+        "200":
+          description: New key created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateApiKeyResponse" }
+              example:
+                key: "da_e6d6b380417b45a2197455648cded32f"
+                id: "69f86839280bbd545b3e835e"
+                label: "ci-runner"
+                prefix: "da_e6d6b3"
+                created_at: "2026-05-04T09:34:49.499Z"
+                last_used_at: null
+                revoked_at: null
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/keys/{id}:
+    delete:
+      tags: [API keys]
+      summary: Revoke an API key
+      description: |
+        Marks the key as revoked. Subsequent requests using it return 401.
+        Revocation is permanent — there is no un-revoke.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: ObjectId of the key.
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevokeResponse" }
+              example: { revoked: true, id: "69f86839280bbd545b3e835e" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Plaintext key (`da_<32 hex>`) issued by `POST /api/keys`.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        Same key as `X-API-Key`, sent as `Authorization: Bearer <key>`.
+        Either scheme is accepted.
+
+  parameters:
+    CollectionName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z][A-Za-z0-9_.\\-]{0,119}$"
+      description: |
+        Letters/digits/`._-`. Cannot start with `_` or `system.` (those are
+        reserved for internal collections like `_api_keys`).
+    DocumentId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string }
+      description: Hex ObjectId.
+
+  responses:
+    BadRequest:
+      description: Validation failed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: invalid_collection, message: "invalid collection name: _secret" }
+    Unauthorized:
+      description: Missing or invalid API key.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: unauthorized, message: missing api key }
+    NotFound:
+      description: Resource does not exist.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: not_found, message: not found }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string, examples: [unauthorized, invalid_collection] }
+        message: { type: string }
+    Health:
+      type: object
+      required: [status, database, mongo]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        database: { type: string }
+        mongo: { type: boolean }
+    CollectionInfo:
+      type: object
+      required: [name, count]
+      properties:
+        name: { type: string }
+        count: { type: integer, format: int64 }
+    CollectionsResponse:
+      type: object
+      required: [collections]
+      properties:
+        collections:
+          type: array
+          items: { $ref: "#/components/schemas/CollectionInfo" }
+    DropResponse:
+      type: object
+      required: [dropped, name]
+      properties:
+        dropped: { type: boolean }
+        name: { type: string }
+    InsertResponse:
+      type: object
+      required: [inserted, ids]
+      properties:
+        inserted: { type: integer, format: int64 }
+        ids:
+          type: array
+          items: { type: string }
+    DocumentsResponse:
+      type: object
+      required: [items, total, limit, skip]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        total: { type: integer, format: int64 }
+        limit: { type: integer }
+        skip: { type: integer, format: int64 }
+    DeleteResponse:
+      type: object
+      required: [deleted, id]
+      properties:
+        deleted: { type: boolean }
+        id: { type: string }
+    ApiKeyView:
+      type: object
+      required: [id, label, prefix, created_at]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        prefix: { type: string, examples: ["da_abc123"] }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+    ApiKeysResponse:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items: { $ref: "#/components/schemas/ApiKeyView" }
+    CreateApiKeyRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          maxLength: 80
+          description: Human-readable label. Defaults to "dashboard" if omitted.
+    CreateApiKeyResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiKeyView"
+        - type: object
+          required: [key]
+          properties:
+            key:
+              type: string
+              description: Plaintext key — shown ONCE on creation.
+              examples: ["da_e6d6b380417b45a2197455648cded32f"]
+    RevokeResponse:
+      type: object
+      required: [revoked, id]
+      properties:
+        revoked: { type: boolean }
+        id: { type: string }

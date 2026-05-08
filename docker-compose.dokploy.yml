@@ -1,0 +1,91 @@
+# Compose file tailored for Dokploy deployments.
+#
+# Differences vs. the standard `docker-compose.yml`:
+#   - No `ports:` mappings on either service. Dokploy's built-in Traefik
+#     reverse-proxies traffic to the `app` container based on the domain
+#     you configure in the Dokploy UI ("Domains" → host=<your-domain>,
+#     service=app, port=8080).
+#   - Image tag is parameterised (`APP_IMAGE_TAG`) so you can pin a known
+#     good version per environment instead of always tracking `:latest`.
+#   - Both services share an explicit `app-net` bridge so service-name
+#     DNS (e.g. `mongo:27017`) always resolves regardless of how Dokploy
+#     wires the project.
+#   - `MONGODB_URI` is parameterised: leave it pointing at the bundled
+#     `mongo` service (default), or set it to a managed MongoDB
+#     connection string and disable the bundled service via
+#     `docker compose --profile bundled-mongo …` toggling, or simply
+#     remove the `mongo` service from the file.
+#
+# Usage on a Dokploy host:
+#   1. Create a new "Compose" service in Dokploy.
+#   2. Point it at this repository (or paste this file in the editor).
+#   3. Set the env vars below in Dokploy's "Environment" panel.
+#   4. Add a Domain entry: service `app`, container port `8080`.
+#   5. Deploy. Dokploy injects Traefik labels automatically.
+
+services:
+  mongo:
+    image: mongo:7
+    # `mongo:7` is a moving tag — always check the registry on `up`/`pull`
+    # so patch releases land without manual intervention. Compose only
+    # actually downloads when the digest differs, so this is cheap.
+    pull_policy: always
+    restart: unless-stopped
+    networks:
+      - app-net
+    volumes:
+      # Dokploy manages persistent volumes per-stack; this name keeps the
+      # volume scoped to this compose project so different deploys don't
+      # share data.
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  app:
+    image: buyungbahari/dump-anything:${APP_IMAGE_TAG:-latest}
+    # Always check the registry for a newer manifest on `up`/`pull`. With
+    # the default `:latest` tag this picks up new releases automatically.
+    # If you've pinned `APP_IMAGE_TAG=0.4.2` (or any other immutable tag)
+    # the digest match short-circuits — no bytes are actually transferred.
+    # Override to `missing` or `never` via APP_PULL_POLICY for offline /
+    # air-gapped environments where you don't want any registry calls.
+    pull_policy: "${APP_PULL_POLICY:-always}"
+    restart: unless-stopped
+    networks:
+      - app-net
+      - dokploy-network
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      # Default points at the bundled `mongo` service via Compose DNS.
+      # Override to use a managed MongoDB instance (Atlas, DocumentDB, …):
+      #   MONGODB_URI=mongodb+srv://user:pass@cluster0.example.com/?retryWrites=true
+      MONGODB_URI: "${MONGODB_URI:-mongodb://mongo:27017}"
+      DATABASE_NAME: "${DATABASE_NAME:-dump_anything}"
+      RUST_LOG: "${RUST_LOG:-info}"
+      DASHBOARD_USER: "${DASHBOARD_USER:-}"
+      DASHBOARD_PASSWORD: "${DASHBOARD_PASSWORD:-}"
+      DASHBOARD_REALM: "${DASHBOARD_REALM:-Dump Anything}"
+      BOOTSTRAP_API_KEY: "${BOOTSTRAP_API_KEY:-}"
+    expose:
+      # Documents the internal port Traefik should target. Pure metadata —
+      # nothing is published to the host. Configure this same port (8080)
+      # in the Dokploy UI's Domain entry.
+      - "8080"
+    # The image ships its own HEALTHCHECK (curl http://127.0.0.1:8080/health),
+    # so Compose/Docker mark the container healthy automatically — no need
+    # to duplicate it here.
+
+networks:
+  app-net:
+    driver: bridge
+  dokploy-network:
+    external: true
+
+volumes:
+  mongo-data:

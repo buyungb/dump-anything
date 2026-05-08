@@ -1,0 +1,14 @@
+{
+  "name": "dump-anything-docs",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "zudoku dev",
+    "build": "zudoku build",
+    "preview": "zudoku preview"
+  },
+  "dependencies": {
+    "zudoku": "^0.76.0"
+  }
+}

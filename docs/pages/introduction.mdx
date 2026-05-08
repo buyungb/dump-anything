@@ -1,0 +1,52 @@
+---
+title: Introduction
+description: Dump any JSON into MongoDB — schema-on-read, paginated explorer, fully typed API.
+---
+
+# Dump Anything
+
+A small, fast Rust + Axum service that accepts arbitrary JSON, stores it in
+dynamically-created MongoDB collections, and exposes a paginated query API.
+
+```
+┌────────────┐   REST JSON   ┌───────────────┐   BSON   ┌────────────┐
+│ Dashboard  │ ────────────▶ │  Rust / Axum  │ ───────▶ │  MongoDB   │
+│ React + TS │               │  dump-anything│          │  any data  │
+└────────────┘               └───────────────┘          └────────────┘
+```
+
+## Why
+
+- **Zero schema migration.** Throw any JSON at it. Collections are created
+  on first write; columns appear in the explorer the moment data lands.
+- **Tiny image.** A single multi-stage Docker image bundles the Rust binary,
+  the React dashboard, and these docs behind nginx — about 150 MB total.
+- **Hardened by default.** Every `/api/*` request requires an API key.
+  Keys live in the database, are SHA-256 hashed, and can be created or
+  revoked from the dashboard.
+
+## What's in this docs site
+
+- A [quickstart](/quickstart) that walks you through `docker compose up`
+  to your first ingest in under a minute.
+- An [authentication guide](/authentication) covering the bootstrap key,
+  labelled keys, and rotation.
+- Recipes for [ingesting data](/ingesting-data) and
+  [filtering/sorting](/filtering-and-sorting).
+- An [interactive API reference](/api) generated from the OpenAPI 3.1
+  spec, with a "Try it" panel for every endpoint.
+
+## At a glance
+
+| Resource                | Endpoint                                              |
+| ----------------------- | ----------------------------------------------------- |
+| Liveness probe (public) | `GET  /health`                                        |
+| List collections        | `GET  /api/collections`                               |
+| Drop a collection       | `DELETE /api/collections/{name}`                      |
+| Ingest JSON             | `POST /api/collections/{name}/documents`              |
+| Query documents         | `GET  /api/collections/{name}/documents`              |
+| Fetch one document      | `GET  /api/collections/{name}/documents/{id}`         |
+| Delete one document     | `DELETE /api/collections/{name}/documents/{id}`       |
+| List API keys           | `GET  /api/keys`                                      |
+| Create an API key       | `POST /api/keys`                                      |
+| Revoke an API key       | `DELETE /api/keys/{id}`                               |
