@@ -7,8 +7,8 @@ info:
     A small, fast Rust + Axum service that accepts arbitrary JSON, stores it
     in dynamically-created MongoDB collections, and exposes a paginated query
     API. Every `/api/...` endpoint requires an API key in the `X-API-Key`
-    header (or `Authorization: Bearer <key>`). `/health` is the only public
-    endpoint and is intended for orchestrator probes.
+    header, or in `Authorization` with the Bearer/Basic type assigned when
+    the key was created. `/health` is the only public endpoint.
   contact:
     name: Dump Anything
     url: https://hub.docker.com/r/buyungbahari/dump-anything
@@ -31,6 +31,7 @@ tags:
 security:
   - apiKeyHeader: []
   - bearerAuth: []
+  - basicApiKey: []
 paths:
   /health:
     get:
@@ -225,7 +226,7 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/CreateApiKeyRequest" }
-            example: { label: "ci-runner" }
+            example: { label: "ci-runner", auth_type: "basic" }
       responses:
         "200":
           description: New key created.
@@ -237,6 +238,7 @@ paths:
                 id: "69f86839280bbd545b3e835e"
                 label: "ci-runner"
                 prefix: "da_e6d6b3"
+                auth_type: "basic"
                 created_at: "2026-05-04T09:34:49.499Z"
                 last_used_at: null
                 revoked_at: null
@@ -278,8 +280,15 @@ components:
       scheme: bearer
       bearerFormat: opaque
       description: |
-        Same key as `X-API-Key`, sent as `Authorization: Bearer <key>`.
-        Either scheme is accepted.
+        A key created with `auth_type: bearer`, sent as
+        `Authorization: Bearer <key>`.
+    basicApiKey:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        A key created with `auth_type: basic`, sent as
+        `Authorization: Basic <key>`. Enter the complete header value.
 
   parameters:
     CollectionName:
@@ -380,11 +389,15 @@ components:
         id: { type: string }
     ApiKeyView:
       type: object
-      required: [id, label, prefix, created_at]
+      required: [id, label, prefix, auth_type, created_at]
       properties:
         id: { type: string }
         label: { type: string }
         prefix: { type: string, examples: ["da_abc123"] }
+        auth_type:
+          type: string
+          enum: [bearer, basic]
+          description: Authorization scheme assigned to this key.
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
         revoked_at: { type: [string, "null"], format: date-time }
@@ -402,6 +415,11 @@ components:
           type: string
           maxLength: 80
           description: Human-readable label. Defaults to "dashboard" if omitted.
+        auth_type:
+          type: string
+          enum: [bearer, basic]
+          default: bearer
+          description: Authorization scheme assigned to the new key.
     CreateApiKeyResponse:
       allOf:
         - $ref: "#/components/schemas/ApiKeyView"

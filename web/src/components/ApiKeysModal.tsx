@@ -15,6 +15,7 @@ import {
   api,
   getApiKey,
   setApiKey,
+  type ApiKeyAuthType,
   type ApiKeyCreated,
   type ApiKeyView,
 } from "../api";
@@ -31,22 +32,26 @@ export default function ApiKeysModal({ open, onClose }: Props) {
   });
 
   const [label, setLabel] = useState("");
+  const [authType, setAuthType] = useState<ApiKeyAuthType>("bearer");
   const [createdPlain, setCreatedPlain] = useState<ApiKeyCreated | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setLabel("");
+      setAuthType("bearer");
       setCreatedPlain(null);
       setError(null);
     }
   }, [open]);
 
   const create = useMutation({
-    mutationFn: () => api.createApiKey(label.trim() || "dashboard"),
+    mutationFn: () =>
+      api.createApiKey(label.trim() || "dashboard", authType),
     onSuccess: (data) => {
       setCreatedPlain(data);
       setLabel("");
+      setAuthType("bearer");
       qc.invalidateQueries({ queryKey: ["api-keys"] });
     },
     onError: (e: Error) => setError(e.message),
@@ -109,18 +114,29 @@ export default function ApiKeysModal({ open, onClose }: Props) {
                 setError(null);
                 create.mutate();
               }}
-              className="flex items-center gap-2"
+              className="flex flex-col gap-2 sm:flex-row sm:items-center"
             >
               <input
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="Label (e.g. ci-runner)"
-                className="flex-1 rounded-md border border-border bg-panel-2 px-3 py-1.5 text-sm outline-none placeholder:text-muted focus:ring-1 focus:ring-accent/50"
+                className="w-full flex-1 rounded-md border border-border bg-panel-2 px-3 py-1.5 text-sm outline-none placeholder:text-muted focus:ring-1 focus:ring-accent/50"
               />
+              <select
+                value={authType}
+                onChange={(e) =>
+                  setAuthType(e.target.value as ApiKeyAuthType)
+                }
+                aria-label="Authorization type"
+                className="w-full rounded-md border border-border bg-panel-2 px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-accent/50 sm:w-auto"
+              >
+                <option value="bearer">Bearer</option>
+                <option value="basic">Basic</option>
+              </select>
               <button
                 type="submit"
                 disabled={create.isPending}
-                className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:bg-accent-2 disabled:opacity-50"
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:bg-accent-2 disabled:opacity-50 sm:w-auto"
               >
                 {create.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -196,6 +212,9 @@ function KeyRow({
               this session
             </span>
           )}
+          <span className="rounded bg-panel-2 px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted ring-1 ring-border">
+            {k.auth_type}
+          </span>
           {revoked && (
             <span className="rounded bg-danger/15 px-1.5 py-0.5 text-[10px] font-medium text-danger">
               revoked
@@ -265,8 +284,9 @@ function CreatedBanner({
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
         <span className="min-w-0">
-          Label: <span className="text-text">{data.label}</span> · prefix{" "}
-          <code>{data.prefix}</code>
+          Label: <span className="text-text">{data.label}</span> · auth{" "}
+          <span className="uppercase text-text">{data.auth_type}</span> ·
+          prefix <code>{data.prefix}</code>
         </span>
         <div className="ml-auto flex shrink-0 gap-2">
           <button
