@@ -5,7 +5,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    auth::{self, ApiKeyView},
+    auth::{self, ApiKeyAuthType, ApiKeyView},
     error::{ApiError, ApiResult},
     state::AppState,
 };
@@ -23,6 +23,8 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ListResponse>
 #[derive(Deserialize)]
 pub struct CreateRequest {
     pub label: Option<String>,
+    #[serde(default)]
+    pub auth_type: ApiKeyAuthType,
 }
 
 #[derive(Serialize)]
@@ -51,7 +53,7 @@ pub async fn create(
         ));
     }
     let plain = auth::generate_key();
-    let record = auth::insert_key(&state, &plain, &label).await?;
+    let record = auth::insert_key(&state, &plain, &label, body.auth_type).await?;
     Ok(Json(CreateResponse {
         key: plain,
         view: record.into(),

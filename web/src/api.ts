@@ -25,10 +25,13 @@ export type HealthResponse = {
   mongo: boolean;
 };
 
+export type ApiKeyAuthType = "bearer" | "basic";
+
 export type ApiKeyView = {
   id: string;
   label: string;
   prefix: string;
+  auth_type: ApiKeyAuthType;
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
@@ -150,10 +153,10 @@ export const api = {
 
   // -------- API key management --------
   listApiKeys: () => request<ApiKeysResponse>("/api/keys"),
-  createApiKey: (label: string) =>
+  createApiKey: (label: string, authType: ApiKeyAuthType) =>
     request<ApiKeyCreated>("/api/keys", {
       method: "POST",
-      body: JSON.stringify({ label }),
+      body: JSON.stringify({ label, auth_type: authType }),
     }),
   revokeApiKey: (id: string) =>
     request<{ revoked: boolean; id: string }>(

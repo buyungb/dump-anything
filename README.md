@@ -68,7 +68,10 @@ The image also bundles a [Zudoku](https://zudoku.dev) developer portal at `/docs
 
 ### API keys (required)
 
-Every `/api/...` request must carry a valid API key in the `X-API-Key` header (or `Authorization: Bearer <key>`). `/health` stays public.
+Every `/api/...` request must carry a valid API key. Each key is created as
+either Bearer (the default) or Basic and must use the matching
+`Authorization` scheme. `X-API-Key` works with either type. `/health` stays
+public.
 
 - The very first time the server starts against an empty database it auto-generates a **bootstrap** key and prints it once to the logs:
 
@@ -93,9 +96,15 @@ Programmatic use:
 ```bash
 curl -H "X-API-Key: da_..." http://localhost:8080/api/collections
 curl -H "Authorization: Bearer da_..." http://localhost:8080/api/collections
+curl -H "Authorization: Basic da_..." http://localhost:8080/api/collections
 ```
 
-Storage: keys live in a hidden `_api_keys` collection, hashed with SHA-256. The plaintext is shown exactly once (on creation); the dashboard displays only the prefix afterwards. Revoke writes a `revoked_at` timestamp; revoked keys are rejected immediately.
+The Bearer/Basic type is selected when creating the key. In Basic mode, the
+generated key itself follows `Basic`; it is not a username/password pair.
+Storage: keys live in a hidden `_api_keys` collection, hashed with SHA-256.
+The plaintext is shown exactly once (on creation); the dashboard displays
+only the prefix afterwards. Revoke writes a `revoked_at` timestamp; revoked
+keys are rejected immediately.
 
 ### Protect the dashboard with basic auth
 
@@ -123,7 +132,7 @@ Behaviour (≥ `0.4.2`):
 | Path                                  | Basic auth (when `DASHBOARD_*` set) | API key |
 | ------------------------------------- | ----------------------------------- | ------- |
 | `/` (dashboard SPA + assets)          | required                            | enforced by the SPA after login |
-| `/api/*`                              | **not** required                    | required (`X-API-Key` or Bearer) |
+| `/api/*`                              | **not** required                    | required (`X-API-Key` or assigned Bearer/Basic scheme) |
 | `/docs/*`                             | not required                        | not required |
 | `/health`                             | not required                        | not required |
 
@@ -254,7 +263,9 @@ The full interactive reference (with a "Try it" panel for every endpoint) lives 
 
 All endpoints return JSON. Errors have shape `{ "error": "<code>", "message": "<text>" }`.
 
-Every `/api/...` endpoint requires an API key. Examples below omit the header for brevity — add `-H "X-API-Key: da_..."` (or `-H "Authorization: Bearer da_..."`) to each call.
+Every `/api/...` endpoint requires an API key. Examples below omit the header
+for brevity — add `-H "X-API-Key: da_..."`, or use the Bearer/Basic
+`Authorization` scheme assigned to the key.
 
 ### `GET /health`
 
@@ -264,12 +275,14 @@ Pings Mongo and reports status. **No auth required.**
 
 ```json
 { "keys": [{ "id": "...", "label": "ci-runner", "prefix": "da_abcdef",
+             "auth_type": "bearer",
              "created_at": "...", "last_used_at": "...", "revoked_at": null }] }
 ```
 
 ### `POST /api/keys`
 
-Body `{ "label": "ci-runner" }`. Returns the plaintext key once:
+Body `{ "label": "ci-runner", "auth_type": "basic" }`. `auth_type` defaults
+to `bearer` when omitted. Returns the plaintext key once:
 
 ```json
 { "key": "da_<32 hex>", "id": "...", "label": "ci-runner", "prefix": "...", ... }

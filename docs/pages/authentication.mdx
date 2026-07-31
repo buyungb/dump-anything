@@ -10,15 +10,24 @@ public endpoint and is intended for orchestrator probes.
 
 ## Sending the key
 
-Either header works — pick whichever suits your client.
+Every key has an authorization type: `Bearer` (the default) or `Basic`.
+Use the matching `Authorization` scheme, or send the key with `X-API-Key`,
+which works for either type.
 
 ```bash
-# X-API-Key style (preferred for service-to-service)
+# X-API-Key style (works for Bearer and Basic keys)
 curl -H "X-API-Key: da_…" http://localhost:8080/api/collections
 
-# Bearer style (drop-in compatible with most HTTP libraries)
+# A key created with auth_type "bearer"
 curl -H "Authorization: Bearer da_…" http://localhost:8080/api/collections
+
+# A key created with auth_type "basic"
+curl -H "Authorization: Basic da_…" http://localhost:8080/api/collections
 ```
+
+The value after `Basic` is the generated API key itself; it is not an
+HTTP Basic username/password pair. A Basic key is rejected if it is sent
+with the Bearer scheme, and vice versa.
 
 Missing or invalid keys return `401 unauthorized`:
 
@@ -35,8 +44,9 @@ da_<32 hex chars>           total length 35
 ```
 
 Keys are stored in the hidden `_api_keys` MongoDB collection as
-`{ label, prefix, hash, created_at, last_used_at, revoked_at }`. The hash
-is SHA-256 of the plaintext; the plaintext itself is **never** persisted.
+`{ label, prefix, hash, auth_type, created_at, last_used_at, revoked_at }`.
+The hash is SHA-256 of the plaintext; the plaintext itself is **never**
+persisted. Keys created before `auth_type` was introduced remain Bearer keys.
 
 ## The bootstrap key
 
@@ -60,10 +70,10 @@ Two ways to override:
 
 ## Issuing labelled keys
 
-Open **API keys** in the dashboard topbar and create one per consumer
-(`from-laptop`, `ci-runner`, `webhook-x`, …). The plaintext is shown
-exactly once on creation; the dashboard stores it in `localStorage` if you
-click *Use in this session*.
+Open **API keys** in the dashboard topbar, choose Bearer or Basic, and create
+one per consumer (`from-laptop`, `ci-runner`, `webhook-x`, …). The plaintext
+is shown exactly once on creation; the dashboard stores it in `localStorage`
+if you click *Use in this session*.
 
 Or via the API:
 
@@ -71,7 +81,7 @@ Or via the API:
 curl -X POST http://localhost:8080/api/keys \
   -H "X-API-Key: $KEY" \
   -H 'content-type: application/json' \
-  -d '{"label":"ci-runner"}'
+  -d '{"label":"ci-runner","auth_type":"basic"}'
 ```
 
 ## Rotation
