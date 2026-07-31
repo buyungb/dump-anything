@@ -20,9 +20,12 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ListResponse>
     Ok(Json(ListResponse { keys }))
 }
 
+/// Request body for issuing a new API key.
 #[derive(Deserialize)]
 pub struct CreateRequest {
+    /// Optional human-readable name for the key.
     pub label: Option<String>,
+    /// Authorization scheme assigned to the new key.
     #[serde(default)]
     pub auth_type: ApiKeyAuthType,
 }
