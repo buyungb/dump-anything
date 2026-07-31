@@ -25,12 +25,14 @@ export type HealthResponse = {
   mongo: boolean;
 };
 
+/** Authorization scheme assigned to an API key at creation time. */
 export type ApiKeyAuthType = "bearer" | "basic";
 
 export type ApiKeyView = {
   id: string;
   label: string;
   prefix: string;
+  /** Scheme required when sending this key through the Authorization header. */
   auth_type: ApiKeyAuthType;
   created_at: string;
   last_used_at: string | null;
@@ -153,6 +155,7 @@ export const api = {
 
   // -------- API key management --------
   listApiKeys: () => request<ApiKeysResponse>("/api/keys"),
+  /** Create a labelled API key with the selected Authorization scheme. */
   createApiKey: (label: string, authType: ApiKeyAuthType) =>
     request<ApiKeyCreated>("/api/keys", {
       method: "POST",

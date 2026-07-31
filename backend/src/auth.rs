@@ -27,8 +27,10 @@ const KEY_RANDOM_BYTES: usize = 16;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiKeyAuthType {
+    /// Send the key as `Authorization: Bearer <key>`.
     #[default]
     Bearer,
+    /// Send the key as `Authorization: Basic <key>`.
     Basic,
 }
 
@@ -41,6 +43,8 @@ pub struct ApiKey {
     pub label: String,
     pub prefix: String,
     pub hash: String,
+    /// Authorization scheme required when this key is sent in the
+    /// `Authorization` header. `X-API-Key` remains scheme-neutral.
     #[serde(default)]
     pub auth_type: ApiKeyAuthType,
     pub created_at: BsonDateTime,
@@ -206,6 +210,10 @@ pub async fn verify_request_key(
     }
 }
 
+/// Returns whether an incoming credential may authenticate a stored key.
+///
+/// `None` represents the scheme-neutral `X-API-Key` header. Credentials
+/// extracted from `Authorization` must use the scheme assigned to the key.
 fn request_auth_type_matches(
     stored: ApiKeyAuthType,
     requested: Option<ApiKeyAuthType>,
@@ -230,14 +238,22 @@ pub fn touch_last_used(state: AppState, hash: String) {
     });
 }
 
+/// API-key credentials extracted from an incoming request.
+///
+/// Keys supplied through `Authorization` carry their parsed scheme, while
+/// `X-API-Key` credentials use `None` because that header is scheme-neutral.
 #[derive(Debug, PartialEq, Eq)]
 struct RequestKey {
+    /// Plaintext API key to hash and verify against the stored record.
     plain: String,
     /// X-API-Key remains scheme-neutral. Authorization headers must match
     /// the Bearer/Basic type selected when the key was created.
     auth_type: Option<ApiKeyAuthType>,
 }
 
+/// Extracts an API key and its optional authorization scheme from a request.
+///
+/// `X-API-Key` takes precedence when both supported headers are present.
 fn extract_key(req: &Request<Body>) -> Option<RequestKey> {
     let headers = req.headers();
     if let Some(v) = headers.get("x-api-key").and_then(|h| h.to_str().ok()) {
@@ -311,6 +327,7 @@ pub struct ApiKeyView {
     pub id: String,
     pub label: String,
     pub prefix: String,
+    /// Authorization scheme assigned to the key.
     pub auth_type: ApiKeyAuthType,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
