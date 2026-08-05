@@ -70,8 +70,8 @@ The image also bundles a [Zudoku](https://zudoku.dev) developer portal at `/docs
 
 Every `/api/...` request must carry a valid API key. Each key is created as
 either Bearer (the default) or Basic and must use the matching
-`Authorization` scheme. `X-API-Key` works with either type. `/health` stays
-public.
+`Authorization` scheme. `X-API-Key` and the `api_key` query parameter work
+with either type. `/health` stays public.
 
 - The very first time the server starts against an empty database it auto-generates a **bootstrap** key and prints it once to the logs:
 
@@ -97,10 +97,15 @@ Programmatic use:
 curl -H "X-API-Key: da_..." http://localhost:8080/api/collections
 curl -H "Authorization: Bearer da_..." http://localhost:8080/api/collections
 curl -H "Authorization: Basic da_..." http://localhost:8080/api/collections
+curl "http://localhost:8080/api/collections?api_key=da_..."
 ```
 
 The Bearer/Basic type is selected when creating the key. In Basic mode, the
 generated key itself follows `Basic`; it is not a username/password pair.
+Use the query form only for clients that cannot set headers. The bundled
+nginx access log and Rust request trace omit query strings, but nginx error
+logs, upstream proxies, and monitoring systems may still record the original
+URL and must be configured to redact `api_key` values.
 Storage: keys live in a hidden `_api_keys` collection, hashed with SHA-256.
 The plaintext is shown exactly once (on creation); the dashboard displays
 only the prefix afterwards. Revoke writes a `revoked_at` timestamp; revoked
@@ -132,7 +137,7 @@ Behaviour (≥ `0.4.2`):
 | Path                                  | Basic auth (when `DASHBOARD_*` set) | API key |
 | ------------------------------------- | ----------------------------------- | ------- |
 | `/` (dashboard SPA + assets)          | required                            | enforced by the SPA after login |
-| `/api/*`                              | **not** required                    | required (`X-API-Key` or assigned Bearer/Basic scheme) |
+| `/api/*`                              | **not** required                    | required (header, query, or assigned Bearer/Basic scheme) |
 | `/docs/*`                             | not required                        | not required |
 | `/health`                             | not required                        | not required |
 
@@ -264,8 +269,8 @@ The full interactive reference (with a "Try it" panel for every endpoint) lives 
 All endpoints return JSON. Errors have shape `{ "error": "<code>", "message": "<text>" }`.
 
 Every `/api/...` endpoint requires an API key. Examples below omit the header
-for brevity — add `-H "X-API-Key: da_..."`, or use the Bearer/Basic
-`Authorization` scheme assigned to the key.
+for brevity — add `-H "X-API-Key: da_..."`, use `?api_key=da_...`, or use
+the Bearer/Basic `Authorization` scheme assigned to the key.
 
 ### `GET /health`
 

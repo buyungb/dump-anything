@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Query, State},
     http::{Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -44,7 +44,8 @@ pub struct ApiKey {
     pub prefix: String,
     pub hash: String,
     /// Authorization scheme required when this key is sent in the
-    /// `Authorization` header. `X-API-Key` remains scheme-neutral.
+    /// `Authorization` header. `X-API-Key` and `api_key` remain
+    /// scheme-neutral.
     #[serde(default)]
     pub auth_type: ApiKeyAuthType,
     pub created_at: BsonDateTime,
@@ -212,8 +213,9 @@ pub async fn verify_request_key(
 
 /// Returns whether an incoming credential may authenticate a stored key.
 ///
-/// `None` represents the scheme-neutral `X-API-Key` header. Credentials
-/// extracted from `Authorization` must use the scheme assigned to the key.
+/// `None` represents the scheme-neutral `X-API-Key` header or `api_key`
+/// query parameter. Credentials extracted from `Authorization` must use the
+/// scheme assigned to the key.
 fn request_auth_type_matches(
     stored: ApiKeyAuthType,
     requested: Option<ApiKeyAuthType>,
@@ -241,52 +243,102 @@ pub fn touch_last_used(state: AppState, hash: String) {
 /// API-key credentials extracted from an incoming request.
 ///
 /// Keys supplied through `Authorization` carry their parsed scheme, while
-/// `X-API-Key` credentials use `None` because that header is scheme-neutral.
+/// `X-API-Key` and `api_key` credentials use `None` because those transports
+/// are scheme-neutral.
 #[derive(Debug, PartialEq, Eq)]
 struct RequestKey {
     /// Plaintext API key to hash and verify against the stored record.
     plain: String,
-    /// X-API-Key remains scheme-neutral. Authorization headers must match
+    /// Scheme-neutral sources use `None`. Authorization headers must match
     /// the Bearer/Basic type selected when the key was created.
     auth_type: Option<ApiKeyAuthType>,
 }
 
-/// Extracts an API key and its optional authorization scheme from a request.
+/// Error encountered while reconciling credentials from a request.
+#[derive(Debug, PartialEq, Eq)]
+enum ExtractKeyError {
+    /// An `Authorization` value or query string could not be parsed.
+    Malformed,
+    /// Two supported credential sources supplied different plaintext keys.
+    Conflicting,
+}
+
+/// Extracts and reconciles API keys from all supported request locations.
 ///
-/// `X-API-Key` takes precedence when both supported headers are present.
-fn extract_key(req: &Request<Body>) -> Option<RequestKey> {
+/// Matching credentials may be repeated across sources. If an
+/// `Authorization` header is present, its scheme remains attached so the
+/// stored Bearer/Basic type is still enforced. Different keys are rejected
+/// instead of silently applying source precedence.
+fn extract_key(req: &Request<Body>) -> Result<Option<RequestKey>, ExtractKeyError> {
     let headers = req.headers();
-    if let Some(v) = headers.get("x-api-key").and_then(|h| h.to_str().ok()) {
+    let mut candidates = Vec::new();
+
+    for value in headers.get_all("x-api-key") {
+        let v = value.to_str().map_err(|_| ExtractKeyError::Malformed)?;
         let trimmed = v.trim();
         if !trimmed.is_empty() {
-            return Some(RequestKey {
+            candidates.push(RequestKey {
                 plain: trimmed.to_string(),
                 auth_type: None,
             });
         }
     }
-    if let Some(v) = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-    {
+
+    let authorization_values = headers.get_all(axum::http::header::AUTHORIZATION);
+    let mut authorization_values = authorization_values.iter();
+    if let Some(value) = authorization_values.next() {
+        if authorization_values.next().is_some() {
+            return Err(ExtractKeyError::Conflicting);
+        }
+        let v = value.to_str().map_err(|_| ExtractKeyError::Malformed)?;
         let v = v.trim();
-        let (scheme, value) = v.split_once(' ')?;
+        let (scheme, value) = v
+            .split_once(' ')
+            .ok_or(ExtractKeyError::Malformed)?;
         let auth_type = if scheme.eq_ignore_ascii_case("bearer") {
             ApiKeyAuthType::Bearer
         } else if scheme.eq_ignore_ascii_case("basic") {
             ApiKeyAuthType::Basic
         } else {
-            return None;
+            return Err(ExtractKeyError::Malformed);
         };
         let plain = value.trim();
-        if !plain.is_empty() {
-            return Some(RequestKey {
-                plain: plain.to_string(),
-                auth_type: Some(auth_type),
-            });
+        if plain.is_empty() {
+            return Err(ExtractKeyError::Malformed);
         }
+        candidates.push(RequestKey {
+            plain: plain.to_string(),
+            auth_type: Some(auth_type),
+        });
     }
-    None
+
+    let Query(query_pairs) = Query::<Vec<(String, String)>>::try_from_uri(req.uri())
+        .map_err(|_| ExtractKeyError::Malformed)?;
+    candidates.extend(
+        query_pairs
+            .into_iter()
+            .filter(|(name, _)| name == "api_key")
+            .filter_map(|(_, value)| {
+                let plain = value.trim();
+                (!plain.is_empty()).then(|| RequestKey {
+                    plain: plain.to_string(),
+                    auth_type: None,
+                })
+            }),
+    );
+
+    let Some(first) = candidates.first() else {
+        return Ok(None);
+    };
+    if candidates.iter().any(|key| key.plain != first.plain) {
+        return Err(ExtractKeyError::Conflicting);
+    }
+
+    let auth_type = candidates.iter().find_map(|key| key.auth_type);
+    Ok(Some(RequestKey {
+        plain: first.plain.clone(),
+        auth_type,
+    }))
 }
 
 fn unauthorized(message: &str) -> Response {
@@ -308,8 +360,15 @@ pub async fn require_api_key(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    let Some(request_key) = extract_key(&req) else {
-        return unauthorized("missing api key");
+    let request_key = match extract_key(&req) {
+        Ok(Some(key)) => key,
+        Ok(None) => return unauthorized("missing api key"),
+        Err(ExtractKeyError::Malformed) => {
+            return unauthorized("malformed api key credentials")
+        }
+        Err(ExtractKeyError::Conflicting) => {
+            return unauthorized("conflicting api key credentials")
+        }
     };
     match verify_request_key(&state, &request_key.plain, request_key.auth_type).await {
         Some(key) => {
@@ -406,10 +465,10 @@ mod tests {
         let request = request_with_header("x-api-key", "  da_secret  ");
         assert_eq!(
             extract_key(&request),
-            Some(RequestKey {
+            Ok(Some(RequestKey {
                 plain: "da_secret".into(),
                 auth_type: None,
-            })
+            }))
         );
     }
 
@@ -418,10 +477,10 @@ mod tests {
         let request = request_with_header(AUTHORIZATION.as_str(), "bEaReR da_secret");
         assert_eq!(
             extract_key(&request),
-            Some(RequestKey {
+            Ok(Some(RequestKey {
                 plain: "da_secret".into(),
                 auth_type: Some(ApiKeyAuthType::Bearer),
-            })
+            }))
         );
     }
 
@@ -430,10 +489,10 @@ mod tests {
         let request = request_with_header(AUTHORIZATION.as_str(), "BaSiC da_secret");
         assert_eq!(
             extract_key(&request),
-            Some(RequestKey {
+            Ok(Some(RequestKey {
                 plain: "da_secret".into(),
                 auth_type: Some(ApiKeyAuthType::Basic),
-            })
+            }))
         );
     }
 
@@ -441,8 +500,59 @@ mod tests {
     fn rejects_unsupported_or_empty_authorization() {
         let unsupported = request_with_header(AUTHORIZATION.as_str(), "Digest da_secret");
         let empty = request_with_header(AUTHORIZATION.as_str(), "Basic  ");
-        assert_eq!(extract_key(&unsupported), None);
-        assert_eq!(extract_key(&empty), None);
+        assert_eq!(extract_key(&unsupported), Err(ExtractKeyError::Malformed));
+        assert_eq!(extract_key(&empty), Err(ExtractKeyError::Malformed));
+    }
+
+    #[test]
+    fn extracts_api_key_from_query_parameter() {
+        let request = Request::builder()
+            .uri("/api/collections?source=va&api_key=da_%73ecret")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            extract_key(&request),
+            Ok(Some(RequestKey {
+                plain: "da_secret".into(),
+                auth_type: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn accepts_the_same_key_from_multiple_sources() {
+        let request = Request::builder()
+            .uri("/api/collections?api_key=da_secret")
+            .header("x-api-key", "da_secret")
+            .header(AUTHORIZATION, "Bearer da_secret")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            extract_key(&request),
+            Ok(Some(RequestKey {
+                plain: "da_secret".into(),
+                auth_type: Some(ApiKeyAuthType::Bearer),
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_conflicting_keys_from_different_sources() {
+        let request = Request::builder()
+            .uri("/api/collections?api_key=da_query")
+            .header("x-api-key", "da_header")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(extract_key(&request), Err(ExtractKeyError::Conflicting));
+
+        let duplicate_query = Request::builder()
+            .uri("/api/collections?api_key=da_one&api_key=da_two")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            extract_key(&duplicate_query),
+            Err(ExtractKeyError::Conflicting)
+        );
     }
 
     #[test]

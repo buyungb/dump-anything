@@ -1,5 +1,5 @@
 use axum::{
-    http::{header, HeaderName, HeaderValue, Method},
+    http::{header, HeaderName, HeaderValue, Method, Request},
     middleware,
     routing::{delete, get, post},
     Router,
@@ -39,7 +39,13 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health::health))
         .nest("/api", api)
         .layer(cors_layer())
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+            tracing::info_span!(
+                "http_request",
+                method = %request.method(),
+                path = %request.uri().path(),
+            )
+        }))
         .with_state(state)
 }
 

@@ -7,8 +7,9 @@ info:
     A small, fast Rust + Axum service that accepts arbitrary JSON, stores it
     in dynamically-created MongoDB collections, and exposes a paginated query
     API. Every `/api/...` endpoint requires an API key in the `X-API-Key`
-    header, or in `Authorization` with the Bearer/Basic type assigned when
-    the key was created. `/health` is the only public endpoint.
+    header, the `api_key` query parameter, or `Authorization` with the
+    Bearer/Basic type assigned when the key was created. `/health` is the
+    only public endpoint.
   contact:
     name: Dump Anything
     url: https://hub.docker.com/r/buyungbahari/dump-anything
@@ -30,6 +31,7 @@ tags:
     description: Issue and revoke keys that gate every other `/api` endpoint.
 security:
   - apiKeyHeader: []
+  - apiKeyQuery: []
   - bearerAuth: []
   - basicApiKey: []
 paths:
@@ -275,6 +277,14 @@ components:
       in: header
       name: X-API-Key
       description: Plaintext key (`da_<32 hex>`) issued by `POST /api/keys`.
+    apiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+      description: |
+        Scheme-neutral fallback for clients that cannot set custom headers.
+        Query strings may leak through upstream logs; use HTTPS, redact this
+        parameter from logs, and prefer `X-API-Key` whenever possible.
     bearerAuth:
       type: http
       scheme: bearer

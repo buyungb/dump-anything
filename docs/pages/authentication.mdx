@@ -11,12 +11,16 @@ public endpoint and is intended for orchestrator probes.
 ## Sending the key
 
 Every key has an authorization type: `Bearer` (the default) or `Basic`.
-Use the matching `Authorization` scheme, or send the key with `X-API-Key`,
-which works for either type.
+Use the matching `Authorization` scheme, or send the key with `X-API-Key`.
+For clients that cannot set custom headers, `api_key` is also accepted as a
+query parameter. The header and query forms work for either key type.
 
 ```bash
 # X-API-Key style (works for Bearer and Basic keys)
 curl -H "X-API-Key: da_…" http://localhost:8080/api/collections
+
+# Query style for clients that cannot set custom headers
+curl "http://localhost:8080/api/collections?api_key=da_…"
 
 # A key created with auth_type "bearer"
 curl -H "Authorization: Bearer da_…" http://localhost:8080/api/collections
@@ -28,6 +32,15 @@ curl -H "Authorization: Basic da_…" http://localhost:8080/api/collections
 The value after `Basic` is the generated API key itself; it is not an
 HTTP Basic username/password pair. A Basic key is rejected if it is sent
 with the Bearer scheme, and vice versa.
+
+If a request supplies credentials in more than one location, every plaintext
+key must match or the request is rejected. Query credentials are convenient
+but less private than headers: URLs may be captured by upstream proxies,
+monitoring tools, or client logs. The bundled nginx access log and Rust
+request trace omit query strings, but nginx error logs and external
+infrastructure may still record the original URL. Configure those systems to
+redact `api_key`. Always use HTTPS and issue a dedicated, revocable key per
+integration.
 
 Missing or invalid keys return `401 unauthorized`:
 
